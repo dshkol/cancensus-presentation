@@ -1,0 +1,499 @@
+---
+title: "cancensus"
+subtitle: "an R interface to Canadian Census data"
+author: "Dmitry Shkolnik"
+date: "2017/10/03"
+output:
+  xaringan::moon_reader:
+    css: ["default", "ubuntu-mono.css"]
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+## Language Diversity in Metro Vancouver
+
+```{r language_code slide, message=FALSE, warning=FALSE, include=FALSE, results='hide'}
+library(cancensus)
+library(sf)
+library(ggplot2)
+
+# Select Census dataset
+dataset <- "CA16"
+
+# Get Language Parent Vector
+language_total <- search_census_vectors("Language spoken most often", dataset) %>% 
+  filter(vector == "v_CA16_1355") 
+
+# Select all leaf nodes of this vector. The parameter TRUE returns only the finite leaves among child nodes. 
+language_children <- language_total %>%
+  child_census_vectors(TRUE) 
+
+# We'll need the aggregated total for our calculations so let's append them together
+language_vectors <- bind_rows(language_total, language_children) %>%
+  pull(vector)
+
+# Get regions list for Van CMA
+regions_list_van <- list_census_regions(dataset) %>% 
+  filter(level=="CMA", name == "Vancouver") %>% 
+  as_census_region_list
+
+langs_van <- get_census(dataset, level = "DA", regions = regions_list_van , vectors = language_vectors, geo_format = "sf", labels = "short")
+
+# Function to compute diversity index
+ldi_calc <- function(df) {
+  tidy_langs <- df %>%
+  rename(`Language Total` = v_CA16_1355) %>%
+  mutate(v_CA16_1364 = v_CA16_1364 + v_CA16_2153 + v_CA16_2150 + v_CA16_2159,
+         v_CA16_1367 = v_CA16_1367 + v_CA16_2156 + v_CA16_2150 + v_CA16_2159) %>%
+  select(-v_CA16_2153, -v_CA16_2150, -v_CA16_2159, -v_CA16_2156) %>%
+  tidyr::gather(key = language, value = lang_count, v_CA16_1364:v_CA16_1937) %>%
+  mutate(ldi_frac = ifelse(lang_count <= `Language Total`, lang_count/`Language Total`, 1)) %>%
+  group_by(GeoUID) %>%
+  mutate(ldi = 1 - sum((ldi_frac)^2)) %>%
+  ungroup() %>%
+  select(-language, -lang_count, -ldi_frac) %>%
+  distinct()
+  return(tidy_langs)
+}
+
+# Apply function over data
+van_ldi <- ldi_calc(langs_van) %>%
+  mutate(`Region Name` = as.factor(gsub(" \\(.*\\)","",`Region Name`)))
+
+# Theme for maps
+map_theme <- theme_void() + 
+  theme(plot.title=element_text(face="bold", hjust = 0.5)) + 
+  theme(plot.subtitle=element_text(hjust = 0.5)) + 
+  theme(plot.caption=element_text(size=8, margin=margin(t=10), hjust = 0.95)) +
+  theme(legend.position = "bottom")
+
+# Generate maps
+mv1 <- ggplot(van_ldi) + geom_sf(aes(fill = ldi), colour = NA) + scale_fill_viridis_c("Language Diversity Index",option = "magma") +
+  map_theme + 
+  guides(fill = guide_colourbar(title.position="top"))
+  #labs(title = "Language Diversity Index",
+  #     subtitle = "Vancouver CMA DA-level data",
+  #     caption = "Dmitry Shkolnik @dshkol\nCensus")
+```
+```{r show_map, echo=FALSE, fig.height=12, fig.width=18, message=FALSE, dpi = 300,  warning=FALSE, fig.align = 'center'}
+mv1
+```
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+  - Code for methods, data, and approaches
+  - As transparent as you want it to be
+- Programmatic
+- Spatial
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+  - Reduce duplication of work
+  - Version control for research
+- Spatial
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+  - Binds geographic data to Census data
+  - Simple GIS 
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+- Tidy
+  - Follows [tidy](http://vita.had.co.nz/papers/tidy-data.pdf) principles
+  - Fits within the R _tidyverse_
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+- Tidy
+- Analysis ready
+  - Minimal data prep needed
+  
+---
+## Why Cancensus?
+
+The current Statistics Canada dissemination model wasn't quite cutting it for some people. 
+
+Programmatic API access to Census data has been promised for a long time but we got tired of waiting...
+
+
+...so we built it ourselves. 
+
+---
+## Under the hood
+
+*cancensus* is an open-source library that anyone can install for their R client. It's not yet on CRAN* but you can install the development version from Github.
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+devtools::install_github("mountainmath/cancensus")
+```
+
+*cancensus* is an API to Statistics Canada Census data cloned and rehosted via [censusmapper.ca](https://censusmapper.ca). While use of this package requires an API key to manage bandwidth and usage, anyone can register for a free key on censusmapper.ca. 
+
+Once you have downloaded *cancensus* and received your API key, just set your environment up the first time you use it by running:
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+Sys.setenv(CM_API_KEY = "YOUR_KEY")
+```
+.footnote[[*] Soon. The truth is we got distracted making things with cancensus instead of finishing it.]
+---
+## A *cancensus* query in detail
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+example <- get_census(dataset, level, regions, 
+                      vectors, geo_format, labels, 
+                      use_cache)
+```
+- `dataset`: select Census 2006, 2011, or 2016 data
+- `level`: Geographic aggregation level (C, P, CD, CSD, CT, DA)
+- `regions`: Census region for your data
+- `vectors`: Census variable vectors
+- `geo_format`: data only, or data + spatial in `sp` or `sf` formats
+- `labels`: Detailed vector var names or truncated names
+- `use_cache`: option to store hashed data locally to reuse offline
+
+---
+## *cancensus* provides tools to simplify working with the Census
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+# List all Census variables
+list_census_vectors(dataset)
+
+# Search for Census variables containing specific terms 
+search_census_vectors(searchterm, dataset)
+
+# Search for parent and children nodes in Census variables
+parent_census_vectors(vector)
+child_census_vectors(vector)
+
+# Provide detailed variable description for Census variable vectors
+label_vectors(df)
+```
+
+---
+## *cancensus* provides tools to simplify working with the Census
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+# List all Census regions
+list_census_regions(dataset)
+
+# Search for Census regions containing specific terms 
+search_census_regions(searchterm, dataset, level)
+
+# Query for Census geography only without any data
+get_census_geometry(dataset, level, geo_format)
+```
+---
+## Calculating Language Diversity
+
+The Language Diversity Index is calculated as 1 minus the probability any two random people in a population speak the same language. 
+
+Greenberg (1958) provides a simple formula that we can use:
+$$ 
+LDI = 1 - \Sigma (P_i)^2
+$$
+
+
+
+
+
+Let's use this to find out what are the most diverse parts of Metro Vancouver.
+
+
+---
+### Calculating Language Diversity: Hands-on
+```{r language_demo1, echo=TRUE, message=FALSE, warning=FALSE, results="hide"}
+library(cancensus)
+
+# Select Census dataset
+dataset <- "CA16"
+
+# search through Census variables to find the parent vector
+language_total <- search_census_vectors("Language spoken most often", 
+                                        dataset) %>% 
+  filter(vector == "v_CA16_1355") 
+
+# Select all leaf nodes of this vector. 
+# The parameter TRUE returns only the finite leaves 
+# among child nodes. 
+
+language_children <- language_total %>%
+  child_census_vectors(TRUE) 
+# We'll need the aggregated total for our calculations 
+# so let's append them together
+
+language_vectors <- bind_rows(language_total, 
+                              language_children) %>%
+  pull(vector)
+
+```
+There are 218 language stems. 
+---
+### Calculating Language Diversity: Hands-on
+```{r language_demo3, echo=TRUE, message=FALSE, warning=FALSE}
+# Search for Census regions at the CMA level 
+# with Vancouver in the name
+van_region <- search_census_regions("vancouver", 
+                                    dataset, 
+                                    level = "CMA") %>%
+  as_census_region_list 
+```
+
+---
+### Calculating Language Diversity: Hands-on
+
+Finally we can query our Census data combined with spatial data (in `sf` format*)
+```{r language_demo5, echo=TRUE, message=FALSE, warning=FALSE}
+library(sf)
+
+langs_van <- get_census(dataset, level = "CSD", 
+                        regions = van_region , 
+                        vectors = language_vectors, 
+                        geo_format = "sf", labels = "short",
+                        quiet = TRUE)
+```
+
+.footnote[[*] cancensus can retrieve spatial data in either `sf` or `sp` format. The latter is a well developed and stable spatial library, while the former is bleeding-edge, often with bugs. Despite that `sf` is the future spatial standard for R and has a number of advantages.] 
+---
+### Calculating Language Diversity: Hands-on
+
+We run the function* to calculate the Language Diversity Index on our Census data.
+```{r language_demo_ldi, message=FALSE, warning=FALSE, include=FALSE}
+ldi_calc <- function(df) {
+  tidy_langs <- df %>%
+  rename(`Language Total` = v_CA16_1355) %>%
+  mutate(v_CA16_1364 = v_CA16_1364 + v_CA16_2153 + v_CA16_2150 + v_CA16_2159,
+         v_CA16_1367 = v_CA16_1367 + v_CA16_2156 + v_CA16_2150 + v_CA16_2159) %>%
+  select(-v_CA16_2153, -v_CA16_2150, -v_CA16_2159, -v_CA16_2156) %>%
+  tidyr::gather(key = language, value = lang_count, v_CA16_1364:v_CA16_1937) %>%
+  mutate(ldi_frac = ifelse(lang_count <= `Language Total`, lang_count/`Language Total`, 1)) %>%
+  group_by(GeoUID) %>%
+  mutate(ldi = 1 - sum((ldi_frac)^2)) %>%
+  ungroup() %>%
+  select(-language, -lang_count, -ldi_frac) %>%
+  distinct()
+  return(tidy_langs)
+}
+```
+```{r language_demo6, echo=TRUE, message=FALSE, warning=FALSE}
+van_ldi <- ldi_calc(langs_van)
+```
+
+.footnote[[*] The code to calculate the Language Diversity Index score for each geographic area is a bit verbose. You can find it detailed [here](https://www.dshkol.com/2017/language-diversity-in-canada/) along with a detailed description of some of the issues with language data if you are so inclined.]
+
+---
+### Calculating Language Diversity: Hands-on
+
+Visualizing our data is very easy because our data is already in a nice and tidy format. 
+
+```{r language_demo7, eval=FALSE, echo=TRUE, message=FALSE, warning=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center'}
+library(ggplot2)
+
+ggplot(van_ldi, aes(x = `Region Name`, y = ldi)) + 
+  geom_bar(stat = "identity") + 
+  coord_flip() + 
+  theme_minimal() +
+  labs(title = "Language Diversity for Greater Vancouver CSDs",
+       x = NULL, y = "Language Diversity Index")
+```
+
+---
+### Calculating Language Diversity: Hands-on
+
+```{r language_demo8, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center'}
+library(ggplot2)
+
+ggplot(van_ldi %>% filter(ldi > 0) , 
+       aes(x = `Region Name`, y = ldi)) + 
+  geom_bar(stat = "identity") + 
+  coord_flip() + 
+  theme_minimal() +
+  labs(title = "Language Diversity for Greater Vancouver CSDs",
+       x = NULL, y = "Language Diversity Index",
+       caption = "2016 Census data
+       Some CSDs with very low populations excluded.")
+```
+
+---
+### Calculating Language Diversity: Hands-on
+
+We can easily compare population against language diversity.
+
+```{r language_demo9, eval=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center', message=FALSE, warning=FALSE}
+library(ggplot2)
+
+ggplot(van_ldi %>% filter(ldi > 0) , aes(y = Population, x = ldi)) + 
+  geom_point() + 
+  theme_minimal() +
+  labs(title = "Language Diversity vs Population Size",
+       y = "Population Size", x = "Language Diversity Index",
+       caption = "2016 Census data, 
+       Some CSDs with very low populations excluded.")
+```
+
+
+---
+### Calculating Language Diversity: Hands-on
+
+```{r language_demo10, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center'}
+library(ggplot2)
+library(ggrepel)
+
+van_ldi <- van_ldi %>% mutate(`Region Name` = as.factor(gsub(" \\(.*\\)","",`Region Name`)))
+
+labeled_points <- c("Richmond", "White Rock","Burnaby", "Richmond","Vancouver","Coquitlam", "Surrey")
+label_data <- van_ldi %>% filter(`Region Name` %in% labeled_points)
+
+ggplot(van_ldi %>% filter(ldi > 0) , aes(y = log(Population), x = ldi)) + 
+  geom_point() + 
+  geom_label_repel(data = label_data,
+    aes(y = log(Population), x = ldi, label = `Region Name`),
+    size = 5,
+    color = 'white', fill = "darkgrey",
+    box.padding = unit(0.5, "lines"),
+    point.padding = unit(0.75, "lines"),
+    segment.color = 'grey50') + 
+  theme_minimal() +
+  labs(title = "Language Diversity vs Population Size for Greater Vancouver CSDs",
+       y = "Log Population Size", x = "Language Diversity Index",
+       caption = "2016 Census data, some CSDs with very low populations excluded.")
+```
+---
+### Calculating Language Diversity: Hands-on
+
+Finally, because our data is already spatial, making maps is super easy. 
+
+```{r language_demo11, eval=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(sf)
+
+ggplot(van_ldi) + 
+  geom_sf(aes(fill = ldi), colour = NA) + 
+  scale_fill_viridis_c("Language Diversity Index", option = "magma") + 
+  theme_void() +
+  labs(title = "Language Diversity Greater Vancouver CSDs",
+       x = NULL, y = NULL,
+       caption = "2016 Census data, 
+       some CSDs with very low populations excluded.")
+```
+---
+### Calculating Language Diversity: Hands-on
+```{r language_demo12, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center'}
+library(ggplot2)
+library(sf)
+
+map_theme <- theme_void() + 
+  theme(plot.title=element_text(face="bold", hjust = 0.5)) + 
+  theme(plot.subtitle=element_text(hjust = 0.5)) + 
+  theme(plot.caption=element_text(size=8, margin=margin(t=10), hjust = 0.95)) +
+  theme(legend.position = "bottom")
+
+# Generate maps
+ggplot(van_ldi) + geom_sf(aes(fill = ldi), colour = NA) + scale_fill_viridis_c("Language Diversity Index",option = "magma") +
+  map_theme + 
+  guides(fill = guide_colourbar(title.position="top")) +
+  labs(title = "Language Diversity Greater Vancouver CSDs",
+       x = NULL, y = NULL)
+```
+---
+### Calculating Language Diversity: Hands-on
+
+What if we used CT-level data instead? Easy. 
+
+Just go back to the original cancensus query and swap the aggregation level. You already have the code for everything else. 
+
+```{r language_demo13, message=FALSE, warning=FALSE, results = 'hide'}
+langs_van <- get_census(dataset, level = "CT", 
+                        regions = van_region , 
+                        vectors = language_vectors, 
+                        geo_format = "sf", labels = "short",
+                        quiet = TRUE)
+```
+All you have to do now is rerun `van_ldi <- ldi_calc(langs_van)` on the new data and you're ready to go. 
+---
+### Calculating Language Diversity: Hands-on
+```{r language_demo14, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center'}
+library(ggplot2)
+library(sf)
+
+van_ldi <- ldi_calc(langs_van)
+
+map_theme <- theme_void() + 
+  theme(plot.title=element_text(face="bold", hjust = 0.5)) + 
+  theme(plot.subtitle=element_text(hjust = 0.5)) + 
+  theme(plot.caption=element_text(size=8, margin=margin(t=10), hjust = 0.95)) +
+  theme(legend.position = "bottom")
+
+# Generate maps
+ggplot(van_ldi) + geom_sf(aes(fill = ldi), colour = NA) + scale_fill_viridis_c("Language Diversity Index",option = "magma") +
+  map_theme + 
+  guides(fill = guide_colourbar(title.position="top")) +
+  labs(title = "Language Diversity Greater Vancouver CSDs",
+       x = NULL, y = NULL)
+```
+---
+### Calculating Language Diversity: Hands-on
+
+DA-level map? Sure, why not*.
+
+```{r language_demo15, eval = FALSE, message=FALSE, warning=FALSE, results = 'hide'}
+langs_van <- get_census(dataset, level = "DA", 
+                        regions = van_region , 
+                        vectors = language_vectors, 
+                        geo_format = "sf", labels = "short",
+                        quiet = TRUE)
+```
+
+.footnote[[*] Actually you may want to watch out with DA level data as it can take a fair bit of time to query, download, process, and map - and may burn through your API quota.]
+
+---
+### Calculating Language Diversity: Hands-on
+```{r language_demo16, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=16, dpi=300,  fig.align='center'}
+mv1
+```
+
+---
+## *cancensus*: an R interface to Canadian Census data
+
+Developed by [Jens von Bergmann](https://twitter.com/vb_jens), [Aaron Jacobs](https://github.com/atheriel), and [Dmitry Shkolnik](https://twitter.com/dshkol)
+
+Presented by Dmitry Shkolnik tw: @dshkol
+
+Additional information, examples, and vignettes available on the github page for _cancensus_ at [github.com/mountainMath/cancensus](https://github.com/mountainmath.cancensus)
+
+In depth examples can be found at Jens' blog [(doodles.mountainmath.com)](https://doodles.mountainmath.ca) or at [(dshkol.com)](https://www.dshkol.com). 
+

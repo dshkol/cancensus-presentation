@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>cancensus</title>
+    <meta charset="utf-8">
+    <meta name="author" content="Dmitry Shkolnik" />
+    <link href="cancensus_datacafe_x_files/remark-css-0.0.1/example.css" rel="stylesheet" />
+    <link rel="stylesheet" href="ubuntu-mono.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+# cancensus
+## an R interface to Canadian Census data
+### Dmitry Shkolnik
+### 2017/10/03
+
+---
+
+## Language Diversity in Metro Vancouver
+
+
+&lt;img src="cancensus_datacafe_x_files/figure-html/show_map-1.png" width="5400" style="display: block; margin: auto;" /&gt;
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+  - Code for methods, data, and approaches
+  - As transparent as you want it to be
+- Programmatic
+- Spatial
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+  - Reduce duplication of work
+  - Version control for research
+- Spatial
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+  - Binds geographic data to Census data
+  - Simple GIS 
+- Tidy
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+- Tidy
+  - Follows [tidy](http://vita.had.co.nz/papers/tidy-data.pdf) principles
+  - Fits within the R _tidyverse_
+- Analysis ready
+
+---
+## *cancensus*: An R interface for Canadian Census data that is:
+
+- Reproducible
+- Programmatic
+- Spatial
+- Tidy
+- Analysis ready
+  - Minimal data prep needed
+  
+---
+## Why Cancensus?
+
+The current Statistics Canada dissemination model wasn't quite cutting it for some people. 
+
+Programmatic API access to Census data has been promised for a long time but we got tired of waiting...
+
+
+...so we built it ourselves. 
+
+---
+## Under the hood
+
+*cancensus* is an open-source library that anyone can install for their R client. It's not yet on CRAN* but you can install the development version from Github.
+
+
+```r
+devtools::install_github("mountainmath/cancensus")
+```
+
+*cancensus* is an API to Statistics Canada Census data cloned and rehosted via [censusmapper.ca](https://censusmapper.ca). While use of this package requires an API key to manage bandwidth and usage, anyone can register for a free key on censusmapper.ca. 
+
+Once you have downloaded *cancensus* and received your API key, just set your environment up the first time you use it by running:
+
+
+```r
+Sys.setenv(CM_API_KEY = "YOUR_KEY")
+```
+.footnote[[*] Soon. The truth is we got distracted making things with cancensus instead of finishing it.]
+---
+## A *cancensus* query in detail
+
+
+```r
+example &lt;- get_census(dataset, level, regions, 
+                      vectors, geo_format, labels, 
+                      use_cache)
+```
+- `dataset`: select Census 2006, 2011, or 2016 data
+- `level`: Geographic aggregation level (C, P, CD, CSD, CT, DA)
+- `regions`: Census region for your data
+- `vectors`: Census variable vectors
+- `geo_format`: data only, or data + spatial in `sp` or `sf` formats
+- `labels`: Detailed vector var names or truncated names
+- `use_cache`: option to store hashed data locally to reuse offline
+
+---
+## *cancensus* provides tools to simplify working with the Census
+
+
+```r
+# List all Census variables
+list_census_vectors(dataset)
+
+# Search for Census variables containing specific terms 
+search_census_vectors(searchterm, dataset)
+
+# Search for parent and children nodes in Census variables
+parent_census_vectors(vector)
+child_census_vectors(vector)
+
+# Provide detailed variable description for Census variable vectors
+label_vectors(df)
+```
+
+---
+## *cancensus* provides tools to simplify working with the Census
+
+
+```r
+# List all Census regions
+list_census_regions(dataset)
+
+# Search for Census regions containing specific terms 
+search_census_regions(searchterm, dataset, level)
+
+# Query for Census geography only without any data
+get_census_geometry(dataset, level, geo_format)
+```
+---
+## Calculating Language Diversity
+
+The Language Diversity Index is calculated as 1 minus the probability any two random people in a population speak the same language. 
+
+Greenberg (1958) provides a simple formula that we can use:
+$$ 
+LDI = 1 - \Sigma (P_i)^2
+$$
+
+
+
+
+
+Let's use this to find out what are the most diverse parts of Metro Vancouver.
+
+
+---
+### Calculating Language Diversity: Hands-on
+
+```r
+library(cancensus)
+
+# Select Census dataset
+dataset &lt;- "CA16"
+
+# search through Census variables to find the parent vector
+language_total &lt;- search_census_vectors("Language spoken most often", 
+                                        dataset) %&gt;% 
+  filter(vector == "v_CA16_1355") 
+
+# Select all leaf nodes of this vector. 
+# The parameter TRUE returns only the finite leaves 
+# among child nodes. 
+
+language_children &lt;- language_total %&gt;%
+  child_census_vectors(TRUE) 
+# We'll need the aggregated total for our calculations 
+# so let's append them together
+
+language_vectors &lt;- bind_rows(language_total, 
+                              language_children) %&gt;%
+  pull(vector)
+```
+There are 218 language stems. 
+---
+### Calculating Language Diversity: Hands-on
+
+```r
+# Search for Census regions at the CMA level 
+# with Vancouver in the name
+van_region &lt;- search_census_regions("vancouver", 
+                                    dataset, 
+                                    level = "CMA") %&gt;%
+  as_census_region_list 
+```
+
+---
+### Calculating Language Diversity: Hands-on
+
+Finally we can query our Census data combined with spatial data (in `sf` format*)
+
+```r
+library(sf)
+
+langs_van &lt;- get_census(dataset, level = "CSD", 
+                        regions = van_region , 
+                        vectors = language_vectors, 
+                        geo_format = "sf", labels = "short",
+                        quiet = TRUE)
+```
+
+.footnote[[*] cancensus can retrieve spatial data in either `sf` or `sp` format. The latter is a well developed and stable spatial library, while the former is bleeding-edge, often with bugs. Despite that `sf` is the future spatial standard for R and has a number of advantages.] 
+---
+### Calculating Language Diversity: Hands-on
+
+We run the function* to calculate the Language Diversity Index on our Census data.
+
+
+```r
+van_ldi &lt;- ldi_calc(langs_van)
+```
+
+.footnote[[*] The code to calculate the Language Diversity Index score for each geographic area is a bit verbose. You can find it detailed [here](https://www.dshkol.com/2017/language-diversity-in-canada/) along with a detailed description of some of the issues with language data if you are so inclined.]
+
+---
+### Calculating Language Diversity: Hands-on
+
+Visualizing our data is very easy because our data is already in a nice and tidy format. 
+
+
+```r
+library(ggplot2)
+
+ggplot(van_ldi, aes(x = `Region Name`, y = ldi)) + 
+  geom_bar(stat = "identity") + 
+  coord_flip() + 
+  theme_minimal() +
+  labs(title = "Language Diversity for Greater Vancouver CSDs",
+       x = NULL, y = "Language Diversity Index")
+```
+
+---
+### Calculating Language Diversity: Hands-on
+
+&lt;img src="cancensus_datacafe_x_files/figure-html/language_demo8-1.png" width="4800" style="display: block; margin: auto;" /&gt;
+
+---
+### Calculating Language Diversity: Hands-on
+
+We can easily compare population against language diversity.
+
+
+```r
+library(ggplot2)
+
+ggplot(van_ldi %&gt;% filter(ldi &gt; 0) , aes(y = Population, x = ldi)) + 
+  geom_point() + 
+  theme_minimal() +
+  labs(title = "Language Diversity vs Population Size",
+       y = "Population Size", x = "Language Diversity Index",
+       caption = "2016 Census data, 
+       Some CSDs with very low populations excluded.")
+```
+
+
+---
+### Calculating Language Diversity: Hands-on
+
+&lt;img src="cancensus_datacafe_x_files/figure-html/language_demo10-1.png" width="4800" style="display: block; margin: auto;" /&gt;
+---
+### Calculating Language Diversity: Hands-on
+
+Finally, because our data is already spatial, making maps is super easy. 
+
+
+```r
+library(ggplot2)
+library(sf)
+
+ggplot(van_ldi) + 
+  geom_sf(aes(fill = ldi), colour = NA) + 
+  scale_fill_viridis_c("Language Diversity Index", option = "magma") + 
+  theme_void() +
+  labs(title = "Language Diversity Greater Vancouver CSDs",
+       x = NULL, y = NULL,
+       caption = "2016 Census data, 
+       some CSDs with very low populations excluded.")
+```
+---
+### Calculating Language Diversity: Hands-on
+&lt;img src="cancensus_datacafe_x_files/figure-html/language_demo12-1.png" width="4800" style="display: block; margin: auto;" /&gt;
+---
+### Calculating Language Diversity: Hands-on
+
+What if we used CT-level data instead? Easy. 
+
+Just go back to the original cancensus query and swap the aggregation level. You already have the code for everything else. 
+
+
+```r
+langs_van &lt;- get_census(dataset, level = "CT", 
+                        regions = van_region , 
+                        vectors = language_vectors, 
+                        geo_format = "sf", labels = "short",
+                        quiet = TRUE)
+```
+All you have to do now is rerun `van_ldi &lt;- ldi_calc(langs_van)` on the new data and you're ready to go. 
+---
+### Calculating Language Diversity: Hands-on
+&lt;img src="cancensus_datacafe_x_files/figure-html/language_demo14-1.png" width="4800" style="display: block; margin: auto;" /&gt;
+---
+### Calculating Language Diversity: Hands-on
+
+DA-level map? Sure, why not*.
+
+
+```r
+langs_van &lt;- get_census(dataset, level = "DA", 
+                        regions = van_region , 
+                        vectors = language_vectors, 
+                        geo_format = "sf", labels = "short",
+                        quiet = TRUE)
+```
+
+.footnote[[*] Actually you may want to watch out with DA level data as it can take a fair bit of time to query, download, process, and map - and may burn through your API quota.]
+
+---
+### Calculating Language Diversity: Hands-on
+&lt;img src="cancensus_datacafe_x_files/figure-html/language_demo16-1.png" width="4800" style="display: block; margin: auto;" /&gt;
+
+---
+## *cancensus*: an R interface to Canadian Census data
+
+Developed by [Jens von Bergmann](https://twitter.com/vb_jens), [Aaron Jacobs](https://github.com/atheriel), and [Dmitry Shkolnik](https://twitter.com/dshkol)
+
+Presented by Dmitry Shkolnik tw: @dshkol
+
+Additional information, examples, and vignettes available on the github page for _cancensus_ at [github.com/mountainMath/cancensus](https://github.com/mountainmath.cancensus)
+
+In depth examples can be found at Jens' blog [(doodles.mountainmath.com)](https://doodles.mountainmath.ca) or at [(dshkol.com)](https://www.dshkol.com).
+    </textarea>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create();
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {window.dispatchEvent(new Event('resize'));});
+(function() {var d = document, s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler"); if (!r) return; s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }"; d.head.appendChild(s);})();</script>
+
+<script type="text/x-mathjax-config">
+MathJax.Hub.Config({
+  tex2jax: {
+    skipTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+  }
+});
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://cdn.bootcss.com/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
